@@ -2,7 +2,6 @@
 Be sure you have minitorch installed in you Virtual Env.
 >>> pip install -Ue .
 """
-
 import random
 
 import minitorch
@@ -11,7 +10,10 @@ import minitorch
 class Network(minitorch.Module):
     def __init__(self, hidden_layers):
         super().__init__()
-        raise NotImplementedError("Need to include this file from past assignment.")
+        # TODO: Implement for Task 1.5.
+        self.layer1 = Linear(2, hidden_layers)
+        self.layer2 = Linear(hidden_layers, hidden_layers)
+        self.layer3 = Linear(5, 1)
 
     def forward(self, x):
         middle = [h.relu() for h in self.layer1.forward(x)]
@@ -39,8 +41,21 @@ class Linear(minitorch.Module):
                 )
             )
 
-    def forward(self, inputs):
-        raise NotImplementedError("Need to include this file from past assignment.")
+    def forward(self, x):
+        # TODO: Implement for Task 1.5.
+        assert len(x) == len(self.weights)
+        
+        b = self.bias
+        W = self.weights
+        z = [minitorch.Scalar(0) for _ in range(len(b))]
+        for j in range(len(b)):
+            for i in range(len(x)):
+                z[j] = z[j] + x[i] * W[i][j].value
+            z[j] = z[j] + b[j].value
+
+        return z
+                
+
 
 
 def default_log_fn(epoch, total_loss, correct, losses):
@@ -62,7 +77,7 @@ class ScalarTrain:
         self.max_epochs = max_epochs
         self.model = Network(self.hidden_layers)
         optim = minitorch.SGD(self.model.parameters(), learning_rate)
-
+        eps = minitorch.Scalar(1e-15) # Add small epsilon for numerical stability in loss calculation
         losses = []
         for epoch in range(1, self.max_epochs + 1):
             total_loss = 0.0
@@ -84,12 +99,12 @@ class ScalarTrain:
                 else:
                     prob = -out + 1.0
                     correct += 1 if out.data < 0.5 else 0
-                loss = -prob.log()
+                
+                loss = -(prob + eps).log()
                 (loss / data.N).backward()
                 total_loss += loss.data
 
             losses.append(total_loss)
-
             # Update
             optim.step()
 
@@ -98,9 +113,16 @@ class ScalarTrain:
                 log_fn(epoch, total_loss, correct, losses)
 
 
+# if __name__ == "__main__":
+#     PTS = 50
+#     HIDDEN = 2
+#     RATE = 0.5
+#     data = minitorch.datasets["Simple"](PTS)
+#     ScalarTrain(HIDDEN).train(data, RATE)
+
 if __name__ == "__main__":
     PTS = 50
-    HIDDEN = 2
+    HIDDEN = 10
     RATE = 0.5
-    data = minitorch.datasets["Simple"](PTS)
+    data = minitorch.datasets["Xor"](PTS)
     ScalarTrain(HIDDEN).train(data, RATE)
