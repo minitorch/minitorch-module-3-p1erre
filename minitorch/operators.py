@@ -97,16 +97,17 @@ def sigmoid(x: float) -> float:
 
 # NOTE: this wass added
 
-def sigmoid_back(x: float, y:float):
+def sigmoid_back(x: float, y: float) -> float:
     """Calculates the derivative of the sigmoid"""
-    s = sigmoid(x)
+    # Inline sigmoid calculation to avoid function call issues in Numba
+    s = 1 / (1 + math.exp(-x)) if x >= 0 else math.exp(x) / (1 + math.exp(x))
     return y * s * (1 - s)
 
 
 # - relu
 def relu(x: float) -> float:
     """Applies the ReLu activation function"""
-    return max(x, 0.0)
+    return x if x > 0.0 else 0.0
 
 
 # - log

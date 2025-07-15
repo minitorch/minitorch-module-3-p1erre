@@ -50,6 +50,13 @@ def test_create(backend: str, t1: List[float]) -> None:
     for i in range(len(t1)):
         assert t1[i] == t2[i]
 
+def test_one_args0() -> None:
+    t1 = Tensor.make([0.0, 1.0, 2.0], (3,), backend=shared["fast"])
+    t2 = Tensor.make([5.0, 6.0, 7.0], (3,), backend=shared["fast"])
+    r = 5 + t1
+
+    for i in range(t1.size):
+        assert r[i] == t2[i], f"Failed at index {i}: {r[i]} != {5 + t1[i]}"
 
 @given(data())
 @settings(max_examples=100)

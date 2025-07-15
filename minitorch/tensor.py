@@ -137,7 +137,7 @@ class Tensor:
     def _ensure_tensor(self, b: TensorLike) -> Tensor:
         "Turns a python number into a tensor with the same backend."
         if isinstance(b, (int, float)):
-            c = Tensor.make([b], (1,), backend=self.backend)
+            c = Tensor.make([float(b)], (1,), backend=self.backend)
         else:
             b._type_(self.backend)
             c = b
@@ -331,7 +331,7 @@ class Tensor:
         assert self.is_leaf(), "Only leaf variables can have derivatives."
         if self.grad is None:
             self.grad = Tensor.make(
-                [0] * int(operators.prod(self.shape)), self.shape, backend=self.backend
+                [0.0] * int(operators.prod(self.shape)), self.shape, backend=self.backend
             )
         self.grad += x
 
