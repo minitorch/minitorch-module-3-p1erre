@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MiniTorch Module 3 – GPU Programming (Extended Guide)</title>
+
+  <!-- Mermaid -->
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+  </script>
+
+  <style>
+    :root {
+      --bg: #fdfdfd;
+      --fg: #222;
+      --code-bg: #f3f3f3;
+      --accent: #0062cc;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1e1e1e;
+        --fg: #ddd;
+        --code-bg: #2b2b2b;
+        --accent: #68a0ff;
+      }
+    }
+    body {
+      margin: 0 auto;
+      padding: 2rem 1rem 6rem;
+      max-width: 960px;
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    h1, h2, h3 {
+      color: var(--accent);
+      line-height: 1.25;
+    }
+    pre, code {
+      background: var(--code-bg);
+      border-radius: 4px;
+      padding: 0.4em 0.6em;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.92em;
+      overflow-x: auto;
+    }
+    pre {
+      padding: 1rem;
+      margin: 1.2rem 0;
+    }
+    .diagram {
+      margin: 2rem 0;
+    }
+    .note {
+      background: rgba(255, 200, 0, 0.16);
+      padding: 0.8rem 1rem;
+      border-left: 3px solid rgba(255, 200, 0, 0.55);
+      border-radius: 4px;
+    }
+    a { color: var(--accent); }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>GPU Programming with CUDA & Numba for <strong>MiniTorch Module 3</strong></h1>
+  <p>
+    This page broadens the brief <em>GPU Programming</em> introduction in the MiniTorch docs.
+    It equips you with the essential concepts, algorithms, and Python snippets needed to implement
+    the <code>tensor_map</code>, <code>tensor_zip</code>, <code>tensor_reduce</code>,
+    and CUDA matrix‑multiplication kernels in <code>minitorch/cuda_ops.py</code>.
+    <strong>No assignment solutions appear here</strong>—only the theory and scaffolding
+    you will leverage to write your own high‑performance kernels.
+  </p>
+</header>
+
+<hr />
+
+<section id="why-gpu">
+  <h2>1 · Why GPUs Matter in Deep Learning</h2>
+  <ul>
+    <li><strong>Massive parallelism</strong> – thousands of lightweight hardware threads.</li>
+    <li><strong>High memory bandwidth</strong> – critical for tensor operations.</li>
+    <li><strong>SIMT (Single Instruction, Multiple Thread)</strong> execution
+        enables identical computations across many data elements.</li>
+    <li>Modern deep‑learning workloads are dominated by dense linear algebra
+        (e.g.&nbsp;matrix multiply, convolution) which map naturally to GPU hardware.</li>
+  </ul>
+</section>
+
+<section id="model">
+  <h2>2 · The CUDA Programming Model</h2>
+
+  <h3>2.1 Thread Hierarchy</h3>
+  <pre class="mermaid diagram">
+flowchart LR
+    subgraph Grid
+      direction LR
+      subgraph "Block (0,0)"
+        direction TB
+        T0(thread):::t --> T1(thread)
+        T2(thread):::t --> T3(thread)
+      end
+      subgraph "Block (1,0)"
+        direction TB
+        T4(thread):::t --> T5(thread)
+        T6(thread):::t --> T7(thread)
+      end
+    end
+    classDef t fill:#d0e8ff,stroke:#1c75bc,stroke-width:1px;
+  </pre>
+
+  <p>
+    CUDA exposes a three‑level hierarchy:
+  </p>
+  <ul>
+    <li><strong>Grid</strong> – the entire kernel launch.</li>
+    <li><strong>Block</strong> – a group of threads that share <em>shared memory</em>
+        and can synchronize.</li>
+    <li><strong>Thread</strong> – the basic execution entity with its own registers
+        and <em>local memory</em>.</li>
+  </ul>
+
+  <h3>2.2 Thread Indexing in Numba</h3>
+  <pre><code class="language-python">from numba import cuda
+
+@cuda.jit
+def set_identity(mat):
+    """Set a square matrix to identity (in‑place)."""
+    # Compute 2‑D position of this thread
+    row = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
+    col = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+
+    # Guard: exit if out of bounds
+    if row &lt; mat.shape[0] and col &lt; mat.shape[1]:
+        mat[row, col] = 1.0 if row == col else 0.0
+</code></pre>
+
+  <p class="note">
+    <strong>Guarding threads</strong>: Always ensure your thread’s computed indices are
+    within tensor bounds, otherwise you will read or write past the end of global memory.
+  </p>
+
+  <h3>2.3 Memory Hierarchy</h3>
+  <!-- 2.3 Memory Hierarchy — fixed diagram -->
+  <pre class="mermaid">
+flowchart TD
+    Reg[Registers<br/>(per‑thread) – fastest]
+    Local[Local Memory<br/>(per‑thread)]
+    Shared[Shared Memory<br/>(per‑block,<br/>≈48‑99 kB)]
+    Global[Global Memory<br/>(device‑wide, GBs)]
+    Constant[Constant / Texture<br/>(read‑only)]
+
+    Reg     -->|spill|          Local
+    Local   -->|barrier sync|   Shared
+    Shared  -->                 Global
+    Constant -.-> |broadcast|   Reg
+    Constant -.-> |broadcast|   Shared
+
+    %% styling (optional)
+    classDef fast fill:#d5e6ff,stroke:#0062cc;
+    classDef med  fill:#fff3d1,stroke:#b18400;
+    classDef slow fill:#ffd8df,stroke:#c2185b;
+    class Reg,Local fast
+    class Shared med
+    class Global,Constant slow
+  </pre>
+  <ul>
+    <li><strong>Registers</strong> – lowest latency; allocated by the compiler.</li>
+    <li><strong>Shared memory</strong> – on‑chip scratchpad, explicit allocation;
+        <em>key to fast reductions and tiled matrix multiplication</em>.</li>
+    <li><strong>Global memory</strong> – high latency; coalesced access crucial.</li>
+    <li><strong>Local memory</strong> – overflow area for registers / large arrays.</li>
+  </ul>
+</section>
+
+<!-- ────────────────────────────────────────────────────────────────────── -->
+<section id="cuda-deep-dive">
+  <h2>2 bis · CUDA Programming Model — Deep Dive</h2>
+
+  <h3>2.4 Putting the Pieces Together</h3>
+  <p>
+    At run‑time, <strong>three actors</strong> cooperate:
+  </p>
+  <ol>
+    <li><strong>Host (CPU)</strong>  
+        – allocates device memory, launches kernels, and performs
+        data copies between host ⇄ device.</li>
+    <li><strong>Device (GPU)</strong>  
+        – schedules grids onto one or more <em>Streaming Multiprocessors (SMs)</em>.
+        Each SM time‑slices between many <em>warps</em> to hide memory latency.</li>
+    <li><strong>Kernel code</strong>  
+        – the function you decorate with <code>@cuda.jit</code>; executed
+        by every thread in the grid using the SIMT model.</li>
+  </ol>
+
+  <h4>Execution flow</h4>
+  <ul>
+    <li>The host issues a kernel launch:  
+        <code>my_kernel[blocks_per_grid, threads_per_block](args…)</code>.</li>
+    <li>CUDA creates one grid; the grid is decomposed into blocks of
+        <code>threads_per_block</code>.</li>
+    <li>Blocks are scheduled onto any SM with available resources.  
+        Once resident, the block cannot migrate; it lives there until completion.</li>
+    <li>Within each SM, threads are grouped into <em>warps</em> of 32.
+        Each warp executes one common program counter; divergent branches are serialized.</li>
+    <li>Threads within a <em>block</em> can cooperate through:
+      <ul>
+        <li><strong>Barrier sync</strong> – <code>cuda.syncthreads()</code>.</li>
+        <li><strong>Shared memory</strong> – explicit scratchpad sitting
+            physically <em>inside</em> the SM.</li>
+      </ul>
+    </li>
+    <li>No direct cooperation is possible between <em>different blocks</em>;
+        they can only coordinate via global memory (or by launching a second kernel).</li>
+  </ul>
+
+  <h4>Memory‑access footprint</h4>
+  <p>
+    The interaction pattern is efficient when you:
+  </p>
+  <ul>
+    <li>Read data <em>once</em> from global memory, stage it in shared memory,
+        then reuse it many times (e.g. matrix‑multiplication tiles).</li>
+    <li>Issue <em>coalesced</em> loads: consecutive threads read consecutive addresses.</li>
+    <li>Minimise bank conflicts inside shared memory (stride‑1 or carefully padded).</li>
+  </ul>
+
+  <!-- ───────────── HIERARCHY DIAGRAM ───────────── -->
+  <h3>2.5 Hierarchy at a Glance</h3>
+  <pre class="mermaid diagram">
+  flowchart TB
+    subgraph "Grid (launch)"
+      direction LR
+      subgraph "Block (0,0)\n SM‑resident"
+        direction TB
+        subgraph "Warp 0"
+          T00(Thread 0):::thr & T01 & T02 & T03 & T04 & T05 & T06 & T07
+        end
+        subgraph "Warp 1"
+          T10 & T11 & T12 & T13 & T14 & T15 & T16 & T17
+        end
+        SMem0["Shared Memory\n(≈48 kB)"]:::sm
+      end
+      subgraph "Block (1,0)"
+        direction TB
+        Warp2[•••]:::thr
+        SMem1["Shared Memory"]:::sm
+      end
+    end
+    GMem["Global Memory\n(GDDR6, many GB)"]:::gm
+    classDef thr fill:#d5e6ff,stroke:#0062cc;
+    classDef sm fill:#fff3d1,stroke:#b18400;
+    classDef gm fill:#ffd8df,stroke:#c2185b;
+    GMem <--> Block (0,0)
+    GMem <--> Block (1,0)
+  </pre>
+
+  <!-- ───────────── SEQUENCE DIAGRAM ───────────── -->
+  <h3>2.6 Tiny Example – Vector Add</h3>
+  <pre class="mermaid diagram">
+sequenceDiagram
+    autonumber
+    participant H as Host (CPU)
+    participant D as Device (GPU)
+
+    H->>D: cudaMalloc(d_a, d_b, d_out)
+    H->>D: cudaMemcpyAsync(h_a → d_a), same for b
+    H->>D: add<<<G,B>>>(d_a, d_b, d_out)
+    Note over D: Grid decomposed\ninto blocks & threads
+    D-->>D: Parallel addition in each thread
+    H->>D: cudaMemcpyAsync(d_out → h_out)
+    H->>D: cudaFree(d_a, d_b, d_out)
+  </pre>
+
+  <h4>Listing – kernel &amp; launch</h4>
+  <pre><code class="language-python">@cuda.jit
+def vec_add(a, b, out):
+    i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    if i &lt; out.size:
+        out[i] = a[i] + b[i]
+
+N = 1_000_000
+threads = 256
+blocks  = (N + threads - 1) // threads
+
+vec_add[blocks, threads](d_a, d_b, d_out)
+  </code></pre>
+
+  <p class="note">
+    In this toy kernel every thread touches exactly one element—no shared memory
+    needed. More complex ops (reduce, matmul) leverage the
+    <code>cuda.shared.array</code> pattern introduced earlier.
+  </p>
+</section>
+<!-- ────────────────────────────────────────────────────────────────────── -->
+
+
+<section id="numba-basics">
+  <h2>3 · Launching Kernels with Numba</h2>
+  <p>
+    In Numba, a CUDA kernel is a Python function decorated with <code>@cuda.jit</code>.
+    The launch signature is supplied in square brackets <code>[ grid, block ]</code>.
+  </p>
+
+  <pre><code class="language-python">threads_per_block = (32, 1)
+blocks_per_grid   = ((n + 31) // 32, 1)
+
+vector_add[blocks_per_grid, threads_per_block](a_dev, b_dev, out_dev)</code></pre>
+
+  <h3>3.1 Device, Shared &amp; Local Allocation</h3>
+  <pre><code class="language-python">@cuda.jit
+def scale_add(x, y, out, alpha):
+    # Shared memory array of 32 floats
+    sm = cuda.shared.array(shape=32, dtype=cuda.float32)
+
+    tid = cuda.threadIdx.x
+    gid = cuda.blockIdx.x * cuda.blockDim.x + tid
+
+    if gid &lt; out.size:
+        sm[tid] = alpha * x[gid] + y[gid]
+
+    # All threads populate sm[] before any thread continues
+    cuda.syncthreads()
+
+    # Each thread writes its result back
+    if gid &lt; out.size:
+        out[gid] = sm[tid]</code></pre>
+</section>
+
+<section id="warp-divergence">
+  <h2>4 · Warps &amp; Divergence</h2>
+  <p>
+    Threads execute in groups of 32 (<em>warps</em>). Branches that cause threads
+    within a warp to take different code paths serialize execution.
+    <strong>Keep conditionals simple or move them outside inner loops</strong>.
+  </p>
+</section>
+
+<section id="reductions">
+  <h2>5 · Designing Efficient Reductions</h2>
+
+  <h3>5.1 Why a Two‑Stage Approach?</h3>
+  <ol>
+    <li><strong>Intra‑block reduction</strong>: each block collapses its elements into
+        a single partial within <em>shared memory</em>.</li>
+    <li><strong>Inter‑block reduction</strong>: launch a second kernel (or loop)
+        to combine the partials.</li>
+  </ol>
+
+  <pre class="mermaid diagram">
+flowchart LR
+    subgraph Block0
+      A0 -->|shared mem sum| P0[(partial 0)]
+    end
+    subgraph Block1
+      A1 -->|shared mem sum| P1[(partial 1)]
+    end
+    P0 & P1 -->|global sum| Result[(final)]
+  </pre>
+
+  <h3>5.2 Shared Memory Tree Reduction Skeleton</h3>
+  <pre><code class="language-python">@cuda.jit
+def block_sum(data, partial):
+    tid  = cuda.threadIdx.x
+    bid  = cuda.blockIdx.x
+    i    = bid * cuda.blockDim.x + tid
+
+    # Static shared buffer
+    smem = cuda.shared.array(1024, dtype=cuda.float32)
+    smem[tid] = data[i] if i &lt; data.size else 0.0
+    cuda.syncthreads()
+
+    # Binary tree reduction
+    stride = cuda.blockDim.x // 2
+    while stride &gt; 0:
+        if tid &lt; stride:
+            smem[tid] += smem[tid + stride]
+        cuda.syncthreads()
+        stride //= 2
+
+    # Write one result per block
+    if tid == 0:
+        partial[bid] = smem[0]</code></pre>
+
+  <p class="note">
+    The algorithm above keeps <strong>exactly one</strong> global write per block.
+    You will adapt the same idea inside <code>tensor_reduce</code>.
+  </p>
+</section>
+
+<section id="matmul">
+  <h2>6 · Tiled Matrix Multiplication Strategy</h2>
+
+  <h3>6.1 High‑Level Idea</h3>
+  <p>
+    Instead of each thread loading whole rows/columns from <em>global</em> memory,
+    we cooperatively load square <strong>tiles</strong> into shared memory—
+    then perform many FMA operations on those fast tiles before moving to the next.
+  </p>
+
+  <pre class="mermaid diagram">
+flowchart TB
+    subgraph "Tile (A)"
+      direction LR
+      A11-->A12
+      A21-->A22
+    end
+    subgraph "Tile (B)"
+      direction LR
+      B11-->B12
+      B21-->B22
+    end
+    A11 --mult--> C11[(C)]
+    A12 --mult--> C11
+    B11 --mult--> C11
+    B21 --mult--> C11
+  </pre>
+
+  <h3>6.2 Kernel Skeleton</h3>
+  <pre><code class="language-python">@cuda.jit
+def tiled_matmul(a, b, c, n):
+    TILE = 16
+    # Thread coordinates
+    tx = cuda.threadIdx.x
+    ty = cuda.threadIdx.y
+    row = cuda.blockIdx.y * TILE + ty
+    col = cuda.blockIdx.x * TILE + tx
+
+    # Shared memory tiles
+    sA = cuda.shared.array(shape=(TILE, TILE), dtype=cuda.float32)
+    sB = cuda.shared.array(shape=(TILE, TILE), dtype=cuda.float32)
+
+    tmp = 0.0
+    for ph in range((n + TILE - 1) // TILE):
+        # Load one tile each
+        if row &lt; n and ph * TILE + tx &lt; n:
+            sA[ty, tx] = a[row, ph * TILE + tx]
+        else:
+            sA[ty, tx] = 0.0
+        if col &lt; n and ph * TILE + ty &lt; n:
+            sB[ty, tx] = b[ph * TILE + ty, col]
+        else:
+            sB[ty, tx] = 0.0
+
+        cuda.syncthreads()
+
+        # Compute partial
+        for k in range(TILE):
+            tmp += sA[ty, k] * sB[k, tx]
+        cuda.syncthreads()
+
+    if row &lt; n and col &lt; n:
+        c[row, col] = tmp</code></pre>
+
+  <p>
+    ✱ Observe how <strong>each element</strong> of <code>a</code> and <code>b</code>
+    is read <em>only once per tile</em>, while the arithmetic on cached values
+    is unbounded—this drastically improves arithmetic ÷ memory ratio.
+  </p>
+</section>
+
+<section id="best-practices">
+  <h2>7 · Best Practices &amp; Debugging Tips</h2>
+  <ul>
+    <li>Choose block sizes that are multiples of 32 to keep warps fully occupied.</li>
+    <li>Use <code>cuda.syncthreads()</code> <em>only</em> when threads must see each
+        other’s writes—excess barriers hurt performance.</li>
+    <li>Prefer <strong>structure of arrays</strong> over array‑of‑structures
+        to enable coalesced loads.</li>
+    <li>Profile with <code>nvprof</code> or Nsight Systems to
+        verify <em>global → shared → registers</em> traffic.</li>
+    <li>Start with small tiles (<code>TILE = 16</code>), then experiment with 32.</li>
+    <li>Use <code>@cuda.jit(debug=True)</code> to catch out‑of‑bounds accesses.</li>
+  </ul>
+</section>
+
+<section id="next-steps">
+  <h2>8 · Next Steps</h2>
+  <ol>
+    <li>Implement <code>tensor_map</code> and <code>tensor_zip</code>
+        by mapping each tensor element to one GPU thread.</li>
+    <li>Apply the shared‑memory reduction pattern to
+        <code>tensor_reduce</code> and <code>_sum_practice</code>.</li>
+    <li>Adapt the tiled matmul skeleton for
+        <code>_mm_practice</code> and the full <code>_tensor_matrix_multiply</code>.</li>
+    <li>Benchmark your kernels against the naïve CPU versions using
+        Python <code>time</code> or <code>torch.cuda.Event</code>.</li>
+  </ol>
+</section>
+
+<footer>
+  <hr />
+  <p>
+    © 2025 | MiniTorch Extended Guide.  
+    Built with pure HTML, Mermaid, and Numba examples.
+  </p>
+</footer>
+
+</body>
+</html>

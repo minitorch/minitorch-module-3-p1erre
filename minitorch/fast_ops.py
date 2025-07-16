@@ -367,29 +367,49 @@ def _tensor_matrix_multiply(
         None : Fills in `out`
 
     """
-    # Remove unused batch stride variables for cleaner code
-    # a_batch_stride = a_strides[0] if a_shape[0] > 1 else 0
-    # b_batch_stride = b_strides[0] if b_shape[0] > 1 else 0
-
-
-
-    # TODO: Implement for Task 3.2.
+    # Outer loop in parallel over output positions
     for ordinal in prange(len(out)):
+        # Convert ordinal to multi-dimensional index for output
         out_index = np.zeros(len(out_shape), np.int32)
         to_index(ordinal, out_shape, out_index)
         out_pos = index_to_position(out_index, out_strides)
-        a_index = np.zeros(len(out_shape), np.int32)
-        b_index = np.zeros(len(out_shape), np.int32)
-        a_index[:-2] = out_index[:-2]
-        b_index[0] = out_index[0]
-        b_index[-1] = out_index[-1]
+        
+        # Calculate base positions for a and b tensors using broadcasting
+        a_index = np.zeros(len(a_shape), np.int32)
+        b_index = np.zeros(len(b_shape), np.int32)
+        
+        # Handle broadcasting for batch dimensions
+        for i in range(len(out_shape) - 2):
+            if i < len(a_shape) - 2:
+                a_index[i] = out_index[i] if a_shape[i] > 1 else 0
+            if i < len(b_shape) - 2:
+                b_index[i] = out_index[i] if b_shape[i] > 1 else 0
+        
+        # Set row index for a and column index for b
+        a_index[-2] = out_index[-2]  # row
+        b_index[-1] = out_index[-1]  # column
+        
+        # Calculate base positions without the inner dimension
+        a_base_pos = index_to_position(a_index, a_strides)
+        b_base_pos = index_to_position(b_index, b_strides)
+        
+        # Get strides for the inner dimension
+        a_inner_stride = a_strides[-1]
+        b_inner_stride = b_strides[-2]
+        
+        # - No global writes (accumulate in local variable)
+        # - Only 1 multiply per iteration
+        # - No function calls
+        dot_product = 0.0
         for k in range(a_shape[-1]):
-            a_index[-1] = k
-            b_index[-2] = k
-            a_pos = index_to_position(a_index, a_strides)
-            b_pos = index_to_position(b_index, b_strides)
-            out[out_pos] = out[out_pos] + a_storage[a_pos] * b_storage[b_pos]
+            a_pos = a_base_pos + k * a_inner_stride
+            b_pos = b_base_pos + k * b_inner_stride
+            dot_product += a_storage[a_pos] * b_storage[b_pos]
+        
+        # Single write to output
+        out[out_pos] = dot_product
 
 
 tensor_matrix_multiply = njit(_tensor_matrix_multiply, parallel=True)
+# tensor_matrix_multiply = _tensor_matrix_multiply
 assert tensor_matrix_multiply is not None

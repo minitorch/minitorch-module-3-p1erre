@@ -385,3 +385,15 @@ def test_bmm(backend: str, data: DataObject) -> None:
         .view(D, A, C)
     )
     assert_close_tensor(c, c2)
+
+
+def test_constant_matrices() -> None:
+    """Test operations on two constant matrices to verify fast ops correctness."""
+    # Create two constant matrices
+    a = minitorch.tensor([[2.0, 3.0, 1.0], [4.0, 1.0, 2.0]], backend=FastTensorBackend)
+    b = minitorch.tensor([[1.0, 0.0], [2.0, 5.0], [1.0, 3.0]], backend=FastTensorBackend)
+    
+    # Test matrix multiplication
+    c = a @ b
+    expected = minitorch.tensor([[9.0, 18.0], [8.0, 11.0]], backend=FastTensorBackend)
+    assert_close_tensor(c, expected)

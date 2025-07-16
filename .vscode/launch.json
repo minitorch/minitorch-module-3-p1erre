@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug test_constant_matrices with Pytest",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "tests/test_tensor_general.py::test_constant_matrices",
+        "-s"  // optional: show print statements
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}
