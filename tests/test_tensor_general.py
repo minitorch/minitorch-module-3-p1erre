@@ -12,6 +12,7 @@ from minitorch import MathTestVariable, Tensor, TensorBackend, grad_check
 
 from .strategies import assert_close, small_floats
 from .tensor_strategies import assert_close_tensor, shaped_tensors, tensors
+from numba.core import errors as numba_errors
 
 one_arg, two_arg, red_arg = MathTestVariable._comp_testing()
 
@@ -57,6 +58,27 @@ def test_one_args0() -> None:
 
     for i in range(t1.size):
         assert r[i] == t2[i], f"Failed at index {i}: {r[i]} != {5 + t1[i]}"
+
+# @given(data())
+# @settings(max_examples=5)
+# @pytest.mark.parametrize("fn", one_arg)
+# @pytest.mark.task3_3
+# @pytest.mark.skipif(not numba.cuda.is_available(), reason="CUDA not available")
+# def test_one_args_cuda(
+#     fn: Tuple[str, Callable[[float], float], Callable[[Tensor], Tensor]],
+#     data: DataObject,
+# ) -> None:
+#     """Run forward for all one arg functions above (CUDA)."""
+#     try:
+#         t1 = data.draw(tensors(backend=shared["cuda"]))
+#         name, base_fn, tensor_fn = fn
+#         t2 = tensor_fn(t1)
+#         for ind in t2._tensor.indices():
+#             assert_close(t2[ind], base_fn(t1[ind]))
+#     except numba_errors.TypingError as e:
+#         pytest.xfail(
+#             f"CUDA kernel compilation failed (likely incomplete CUDA implementation): {str(e).splitlines()[0]}"
+#         )
 
 @given(data())
 @settings(max_examples=100)

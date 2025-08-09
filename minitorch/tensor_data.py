@@ -56,36 +56,17 @@ def to_index(ordinal: int, shape: Shape, out_index: OutIndex) -> None:
     Should ensure that enumerating position 0 ... size of a
     tensor produces every index exactly once. It
     may not be the inverse of `index_to_position`.
-
-    Args:
-        ordinal: ordinal position to convert.
-        shape : tensor shape.
-        out_index : return index corresponding to position.
-
     """
-    # TODO: Implement for Task 2.1.
-    shape = np.asarray(shape, dtype=np.int32)
-    # Removed assertions to enable parallelization:
-    # assert shape.ndim == 1
-    # assert (shape > 0).all()
-    
-    # Calculate product manually to avoid BLAS operations on integer arrays
-    total_size = 1
-    for s in shape:
-        total_size *= s
-    # Removed assertion to enable parallelization: assert 0 <= ordinal < total_size
-
-    # Use local copy to avoid "overwrite of parallel loop index" error
-    ordinal_copy = ordinal
-    for i in range(1, len(shape)):
-        # Calculate block_size manually to avoid BLAS operations
-        block_size = 1
-        for j in range(i, len(shape)):
-            block_size *= shape[j]
-        out_index[i - 1] = ordinal_copy // block_size
-        ordinal_copy %= block_size
-
-    out_index[len(shape)-1] = ordinal_copy % shape[len(shape) - 1]
+    # CUDA-/Numba-safe: no NumPy, no mutation of caller's loop index variable name.
+    flat = int(ordinal)
+    n = len(shape)
+    for d in range(n - 1, -1, -1):
+        dim = int(shape[d])
+        if dim == 0:
+            out_index[d] = 0
+        else:
+            out_index[d] = flat % dim
+            flat //= dim
 
 def broadcast_index(
     big_index: Index, big_shape: Shape, shape: Shape, out_index: OutIndex
@@ -227,6 +208,9 @@ class TensorData:
         if isinstance(index, tuple):
             aindex = array(index)
 
+        # Ensure expected dtype for Numba (Index is np.int32)
+        aindex = aindex.astype(np.int32, copy=False)
+
         # Check for errors
         if aindex.shape[0] != len(self.shape):
             raise IndexingError(f"Index {aindex} must be size of {self.shape}.")
@@ -236,9 +220,9 @@ class TensorData:
             if ind < 0:
                 raise IndexingError(f"Negative indexing for {aindex} not supported.")
 
-        # Call fast indexing.
-        return index_to_position(array(index), self._strides)
-
+        # Call fast indexing with validated index
+        return index_to_position(aindex, self._strides)
+        
     def indices(self) -> Iterable[UserIndex]:
         lshape: Shape = array(self.shape)
         out_index: Index = array(self.shape)
