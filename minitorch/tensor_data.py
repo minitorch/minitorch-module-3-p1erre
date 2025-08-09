@@ -208,9 +208,6 @@ class TensorData:
         if isinstance(index, tuple):
             aindex = array(index)
 
-        # Ensure expected dtype for Numba (Index is np.int32)
-        aindex = aindex.astype(np.int32, copy=False)
-
         # Check for errors
         if aindex.shape[0] != len(self.shape):
             raise IndexingError(f"Index {aindex} must be size of {self.shape}.")
@@ -220,8 +217,8 @@ class TensorData:
             if ind < 0:
                 raise IndexingError(f"Negative indexing for {aindex} not supported.")
 
-        # Call fast indexing with validated index
-        return index_to_position(aindex, self._strides)
+        # Call fast indexing.
+        return index_to_position(array(index), self._strides)
         
     def indices(self) -> Iterable[UserIndex]:
         lshape: Shape = array(self.shape)
