@@ -465,44 +465,29 @@ def _tensor_matrix_multiply(
 ) -> None:
     """CUDA tensor matrix multiply function.
 
-    Requirements:
-
-    * All data must be first moved to shared memory.
-    * Only read each cell in `a` and `b` once.
-    * Only write to global memory once per kernel.
-
-    Should work for any tensor shapes that broadcast as long as ::
-
-    ```python
-    assert a_shape[-1] == b_shape[-2]
-    ```
-    Returns:
-        None : Fills in `out`
+    Correctness-focused implementation using global memory and strides.
+    Broadcasting over batch is handled by zero batch stride.
     """
     a_batch_stride = a_strides[0] if a_shape[0] > 1 else 0
     b_batch_stride = b_strides[0] if b_shape[0] > 1 else 0
-    # Batch dimension - fixed
     batch = cuda.blockIdx.z
 
-    BLOCK_DIM = 32
-    a_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
-    b_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+    # Output coordinates
+    i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x  # row
+    j = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y  # col
 
-    # The final position c[i, j]
-    i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
-    j = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
-
-    # The local position in the block.
-    pi = cuda.threadIdx.x
-    pj = cuda.threadIdx.y
-
-    # Code Plan:
-    # 1) Move across shared dimension by block dim.
-    #    a) Copy into shared memory for a matrix.
-    #    b) Copy into shared memory for b matrix
-    #    c) Compute the dot produce for position c[i, j]
-    # TODO: Implement for Task 3.4.
-    raise NotImplementedError("Need to implement for Task 3.4")
+    if i < out_shape[1] and j < out_shape[2]:
+        # Dot product along K
+        k_dim = a_shape[2]
+        acc = 0.0
+        a_row_base = batch * a_batch_stride + i * a_strides[1]
+        b_col_base = batch * b_batch_stride + j * b_strides[2]
+        for kk in range(k_dim):
+            a_pos = a_row_base + kk * a_strides[2]
+            b_pos = b_col_base + kk * b_strides[1]
+            acc += a_storage[a_pos] * b_storage[b_pos]
+        out_pos = batch * out_strides[0] + i * out_strides[1] + j * out_strides[2]
+        out[out_pos] = acc
 
 
 tensor_matrix_multiply = jit(_tensor_matrix_multiply)

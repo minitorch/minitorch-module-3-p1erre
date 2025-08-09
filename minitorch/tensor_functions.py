@@ -215,7 +215,7 @@ class EQ(Function):
 class IsClose(Function):
     @staticmethod
     def forward(ctx: Context, a: Tensor, b: Tensor) -> Tensor:
-        # TODO: Implement for Task 2.3.
+        # Call backend's zip with two tensors; tolerance handled by operator default.
         return a.f.is_close_zip(a, b)
 
 class Permute(Function):

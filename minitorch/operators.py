@@ -71,7 +71,8 @@ def max(x: float, y: float) -> float:
 
 
 # - is_close
-def is_close(x: float, y: float, tol: float = 1e-2) -> bool:
+#def is_close(a: float, b: float, tol: float = 1e-2) -> bool:
+def is_close(a: float, b: float) -> bool:
     """Checks if two numbers are close in value.
 
     Args:
@@ -85,7 +86,8 @@ def is_close(x: float, y: float, tol: float = 1e-2) -> bool:
         true if abs(x-y) < tol
 
     """
-    return x is not None and y is not None and abs(x - y) < tol
+    # Absolute difference check with default tolerance
+    return abs(a - b) < 1e-2
 
 
 # - sigmoid
